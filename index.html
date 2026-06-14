@@ -722,7 +722,7 @@ function drawCinematic(){
 }
 function drawOrbital(){
   const svg=$("orbitalSvg");
-  const W=9000,H=5200,cx=720,cy=3350,perspective=.34;
+  const W=9000,H=5200,cx=4500,cy=3000,perspective=.34;
   svg.setAttribute("viewBox",`0 0 ${W} ${H}`);
   svg.setAttribute("width",W);
   svg.setAttribute("height",H);
@@ -781,15 +781,15 @@ function centerOrbitalCanvas(){
   const svg=$("orbitalSvg");
   if(!canvas || !svg) return;
   const viewBox=svg.viewBox.baseVal;
-  const targetY=Math.max(0, 2850);
-  const targetX=0;
+  const targetY=Math.max(0, 3000 - canvas.clientHeight * .62);
+  const targetX=Math.max(0, 4500 - canvas.clientWidth * .5);
   canvas.scrollTop=targetY;
   canvas.scrollLeft=targetX;
 }
 
 function orbitalMapPosition(body,idx,total,maxOrbit,zoomLevel,cx,cy,perspective){
   const scale=Math.max(.65, zoomLevel);
-  const maxR=Math.min(8050, 7350 * scale);
+  const maxR=Math.min(4050, 3700 * scale);
   const orderedGap=520 + idx * 470 * scale;
   const auOffset=orbitRadiusFor(body.orbit||.1,maxOrbit,0,360 * scale);
   const giantPush=body.type==="gas giant" ? 320 * scale : body.type==="belt" ? 180 * scale : 0;
