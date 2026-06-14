@@ -39,7 +39,7 @@
     #cinematicSvg,#orbitalSvg{display:block;background:#000}
     #cinematicSvg{width:100%;height:620px}
     .orbitalCanvas{overflow:auto;max-height:1400px;background:#000}
-    #orbitalSvg{width:3200px;height:2200px;min-width:3200px;min-height:2200px}
+    #orbitalSvg{width:9000px;height:5200px;min-width:9000px;min-height:5200px}
     .stats{display:grid;grid-template-columns:repeat(9,1fr);border-top:1px solid var(--line);background:rgba(5,12,22,.9)}
     .stat{padding:10px 8px;text-align:center;border-right:1px solid var(--line);min-width:0}
     .stat:last-child{border-right:0}
@@ -77,7 +77,13 @@
     .typeLabel{fill:#d9e4f5;font-size:12px}
     .orbit{fill:none;stroke:#24507f;stroke-width:1;stroke-dasharray:5 6;opacity:.85}
     .orbitSolid{fill:none;stroke:#2869aa;stroke-width:1;opacity:.7}
+    .orbitGuide{stroke:#1d3556;stroke-width:1;opacity:.65}
+    .orbitTick{stroke:#4da3ff;stroke-width:1.2;opacity:.75}
+    .gridLine{stroke:#162235;stroke-width:1;opacity:.55}
+    .gridAxis{stroke:#223755;stroke-width:1.3;opacity:.8}
+    .beltOrbit{fill:none;stroke:#c87941;stroke-width:42;opacity:.52}
     .moonLine{stroke:#244768;stroke-width:1.2}
+    .moonOrbit{fill:none;stroke:#577da8;stroke-width:1;stroke-dasharray:3 4;opacity:.85}
     .ring{fill:none;stroke:#d8d0b0;stroke-width:5;opacity:.75}
     .baseIcon{fill:#ffd479;font-size:16px;font-weight:800}
     .baseText{fill:#ffd479;font-size:11px}
@@ -240,6 +246,7 @@ let currentSystem = null;
 let nameSalt = 0;
 let activeView = "cinematic";
 let zoom = 1;
+let activeGenerationStar = null;
 
 const $ = id => document.getElementById(id);
 $("loadBtn").onclick = () => fetchWorldBySectorHex($("sector").value.trim(), $("hex").value.trim());
@@ -272,6 +279,7 @@ function setView(view){
   $("showCinematic").classList.toggle("active", view==="cinematic");
   $("showOrbital").classList.toggle("active", view==="orbital");
   renderAll();
+  if(view==="orbital") centerOrbitalCanvas();
 }
 function status(msg){ $("status").textContent = msg || ""; }
 
@@ -363,6 +371,7 @@ function generateSystem(world){
   const remarks=String(world.Remarks||"");
   const mainName=world.Name||"Mainworld";
   const star=parseStar(stellar);
+  activeGenerationStar=star;
   const sys={
     source:"Traveller Map plus procedural fill",
     seed: makeSeed(world),
@@ -382,7 +391,7 @@ function generateSystem(world){
     const kind = pick(["gas_giant","ringed_gas_giant","hot_gas_giant"],rand);
     const b=makeBody(kind,"gas giant",orbit,18+(i%3)*3,rand);
     const moonCount=2+((i+uwp.size+uwp.pop)%5);
-    for(let m=0;m<moonCount;m++) b.moons.push(makeMoon(rand,m));
+    for(let m=0;m<moonCount;m++) b.moons.push(makeMoon(rand,m,b.size));
     sys.bodies.push(b);
     orbit+=.36+i*.08;
   }
@@ -394,15 +403,20 @@ function generateSystem(world){
   const isSatellite=/\bSa\b/.test(remarks);
   if(isSatellite && sys.bodies.some(b=>b.type==="gas giant")){
     const host=sys.bodies.find(b=>b.type==="gas giant");
+    mainworld.orbitKm=Math.round((120_000 + host.moons.length * 78_000) * (1 + host.size / 28));
+    mainworld.orbitPeriodDays=Number((Math.sqrt(Math.pow(mainworld.orbitKm / 384_400, 3)) * 27.3).toFixed(1));
+    mainworld.orbitSlot=1;
     host.moons.unshift(mainworld);
     mainworld.orbitNote=`Satellite of ${host.name||"gas giant"}`;
   }else{
     const insertAt=Math.min(sys.bodies.length,Math.max(1,Math.floor(sys.bodies.length*.35)));
-    sys.bodies.splice(insertAt,0,{...mainworld,orbit:sys.bodies[insertAt]?.orbit?sys.bodies[insertAt].orbit-.04:.65});
+    const mainOrbit=sys.bodies[insertAt]?.orbit ? sys.bodies[insertAt].orbit-.04 : .65;
+    sys.bodies.splice(insertAt,0,{...mainworld,orbit:Number(mainOrbit.toFixed(2)),orbitAu:Number(mainOrbit.toFixed(2)),periodDays:orbitalPeriodDays(mainOrbit)});
   }
   sys.bodies.sort((a,b)=>(a.orbit||0)-(b.orbit||0));
   assignNames(sys);
   sys.counts.generatedBodies=sys.bodies.length;
+  activeGenerationStar=null;
   return sys;
 }
 function makeVariedTerrestrial(orbit,size,rand,outer){
@@ -411,13 +425,39 @@ function makeVariedTerrestrial(orbit,size,rand,outer){
     : ["chthonian","volcanic","ash","vacuum","rocky","barren","desert","toxic","corrosive","garden","oceanic"];
   return makeBody(pick(pool,rand),"world",orbit,size,rand);
 }
-function makeMoon(rand,m){
+function makeMoon(rand,m,parentSize=8){
   const pool=["ice","barren","vacuum","rocky","methane","ash","crystal"];
   const asset=pick(pool,rand);
-  return {name:"",type:"moon",asset,size:3+(m%3),moons:[]};
+  const orbitKm=Math.round((90_000 + m * 72_000 + rand() * 42_000) * (1 + parentSize / 28));
+  const orbitPeriodDays=Number((Math.sqrt(Math.pow(orbitKm / 384_400, 3)) * 27.3).toFixed(1));
+  return {name:"",type:"moon",asset,size:3+(m%3),moons:[],orbitKm,orbitPeriodDays,orbitSlot:m+1};
 }
 function makeBody(asset,type,orbit,size,rand){
-  return {name:"",type,asset,orbit:Number(orbit.toFixed(2)),size,moons:[],rings:asset==="ringed_gas_giant"};
+  const orbitAu=Number(orbit.toFixed(2));
+  return {
+    name:"",
+    type,
+    asset,
+    orbit:orbitAu,
+    orbitAu,
+    periodDays:orbitalPeriodDays(orbitAu),
+    size,
+    moons:[],
+    rings:asset==="ringed_gas_giant"
+  };
+}
+
+function orbitalPeriodDays(orbitAu){
+  if(!Number.isFinite(orbitAu) || orbitAu <= 0) return NaN;
+  const starMass = approxStarMass(activeGenerationStar || currentSystem?.star);
+  return Number((365.25 * Math.sqrt(Math.pow(orbitAu,3) / starMass)).toFixed(1));
+}
+
+function approxStarMass(star){
+  const cls=star?.spectralClass || "G";
+  const base={O:32,B:8,A:2.1,F:1.35,G:1,K:.75,M:.35,brown_dwarf:.06,default:1}[cls] || 1;
+  const subtype=Number.isFinite(star?.subtype) ? star.subtype : 5;
+  return Math.max(.05, base * (1.18 - subtype * .035));
 }
 
 function classifyMainworld(uwp,remarks){
@@ -682,46 +722,190 @@ function drawCinematic(){
 }
 function drawOrbital(){
   const svg=$("orbitalSvg");
-  clear(svg); addDefs(svg); addRect(svg,0,0,1800,1100,"#000");
-  drawStars(svg,1800,1100,hashString(currentSystem.seed+"orbital-stars"));
-  const W=1800,H=1100,cx=900,cy=550;
+  const W=9000,H=5200,cx=720,cy=3350,perspective=.34;
+  svg.setAttribute("viewBox",`0 0 ${W} ${H}`);
+  svg.setAttribute("width",W);
+  svg.setAttribute("height",H);
+  clear(svg); addDefs(svg); addRect(svg,0,0,W,H,"#000");
+  drawStars(svg,W,H,hashString(currentSystem.seed+"orbital-stars"));
+  drawPerspectiveGrid(svg,W,H,cx,cy,perspective);
   const starScale = starDisplayScale(currentSystem.star);
-  const starR=Math.max(44,currentSystem.star.radius*.8) * starScale;
+  const starR=Math.max(82,currentSystem.star.radius*1.35) * starScale;
   drawStarAsset(svg,cx,cy,currentSystem.star,starR*2);
-  if(opts.labels) addText(svg,cx,cy+starR+22,starName(currentSystem.star),"label",13,"middle");
+  if(opts.labels) {
+    addText(svg,cx,cy+starR+34,starName(currentSystem.star),"label",20,"middle");
+    addText(svg,54,74,`${currentSystem.world.name} Perspective Orbital Map`,"bigLabel",34,"start");
+    addText(svg,54,112,`${currentSystem.world.sector} ${currentSystem.world.hex} | ${currentSystem.world.uwp} | ${currentSystem.world.stellar}`,"smallLabel",18,"start");
+  }
 
-  const maxOrbit=Math.max(...currentSystem.bodies.map(b=>b.orbit||0),1);
-  const scale=(420/maxOrbit)*zoom;
-  currentSystem.bodies.forEach((b,idx)=>{
+  const bodies=currentSystem.bodies.filter(b => !(b.type==="belt" && !opts.belts));
+  const maxOrbit=Math.max(...bodies.map(b=>b.orbit||0),1);
+  const bodyPositions = bodies.map((b,idx) => orbitalMapPosition(b,idx,bodies.length,maxOrbit,zoom,cx,cy,perspective));
+  if(opts.orbits) drawPerspectiveOrbits(svg,cx,cy,bodyPositions,bodies,maxOrbit,perspective);
+  bodies.forEach((b,idx)=>{
     if(b.type==="belt" && !opts.belts) return;
-    const orbitR=(b.orbit||.1)*scale + 55;
-    if(opts.orbits) addCircle(svg,cx,cy,orbitR,"none","orbit");
-    const angle=(hashString(currentSystem.seed+b.name)%360)*Math.PI/180;
-    const x=cx+Math.cos(angle)*orbitR;
-    const y=cy+Math.sin(angle)*orbitR*.62;
-    const r=b.type==="gas giant"?36:b.type==="belt"?23:b.isMainworld?31:Math.max(18,b.size+12);
+    const {x,y}=bodyPositions[idx];
+    const r=b.type==="gas giant"?74:b.type==="belt"?44:b.isMainworld?62:Math.max(42,b.size*3+30);
+    if(opts.orbits) drawOrbitMarker(svg,x,y,b,idx);
     drawBodyAsset(svg,b,x,y,r);
     if(b.isMainworld){
-      addCircle(svg,x,y,r+4,"none","mainHalo");
+      addCircle(svg,x,y,r+9,"none","mainHalo");
       if(hasHighport(currentSystem)) drawHighport(svg,x,y,r);
     }
     if(opts.labels){
-      addText(svg,x,y+r+17,b.name,"label",12,"middle");
-      addText(svg,x,y+r+31,labelForAsset(b.asset || b.type),"smallLabel",10,"middle");
+      addText(svg,x,y+r+34,b.name,"label",20,"middle");
+      addText(svg,x,y+r+60,`${labelForAsset(b.asset || b.type)} | ${fmtAu(b.orbit)} AU | ${fmtPeriod(b.periodDays)}`,"smallLabel",15,"middle");
     }
     if(opts.moons && b.moons && b.moons.length){
-      const moonBase=r+18;
-      b.moons.forEach((m,mi)=>{
-        const ma=(mi/b.moons.length)*Math.PI*2+.5;
-        const mx=x+Math.cos(ma)*(moonBase+mi*3);
-        const my=y+Math.sin(ma)*(moonBase+mi*3)*.72;
-        addLine(svg,x,y,mx,my,"moonLine");
-        drawBodyAsset(svg,m,mx,my,m.isMainworld?15:9);
-        if(opts.labels && m.isMainworld) addText(svg,mx,my+25,m.name,"smallLabel",10,"middle");
+      const shownMoons=[...b.moons].sort((a,b)=>(a.orbitKm||0)-(b.orbitKm||0));
+      shownMoons.forEach((m,mi)=>{
+        const moonOrbit=moonOrbitRadius(m,mi,r);
+        const moonY=moonOrbit*.48;
+        if(opts.orbits) addEllipse(svg,x,y,moonOrbit,moonY,"none","moonOrbit");
+        const ma=orderedMoonPhase(mi,shownMoons.length);
+        const mx=x+Math.cos(ma)*moonOrbit;
+        const my=y+Math.sin(ma)*moonY;
+        if(opts.orbits) addLine(svg,x,y,mx,my,"moonLine");
+        drawBodyAsset(svg,m,mx,my,m.isMainworld?26:18);
+        if(opts.labels){
+          addText(svg,mx,my+(m.isMainworld?38:30),m.name,"smallLabel",13,"middle");
+        }
       });
     }
   });
-  drawGraphicHeader(svg);
+  drawOrbitalKey(svg);
+}
+
+function centerOrbitalCanvas(){
+  const canvas=document.querySelector(".orbitalCanvas");
+  const svg=$("orbitalSvg");
+  if(!canvas || !svg) return;
+  const viewBox=svg.viewBox.baseVal;
+  const targetY=Math.max(0, 2850);
+  const targetX=0;
+  canvas.scrollTop=targetY;
+  canvas.scrollLeft=targetX;
+}
+
+function orbitalMapPosition(body,idx,total,maxOrbit,zoomLevel,cx,cy,perspective){
+  const scale=Math.max(.65, zoomLevel);
+  const maxR=Math.min(8050, 7350 * scale);
+  const orderedGap=520 + idx * 470 * scale;
+  const auOffset=orbitRadiusFor(body.orbit||.1,maxOrbit,0,360 * scale);
+  const giantPush=body.type==="gas giant" ? 320 * scale : body.type==="belt" ? 180 * scale : 0;
+  const orbitR=Math.min(maxR, orderedGap + auOffset + giantPush);
+  const angle=orbitalPhaseFor(body,idx);
+  return {
+    x:cx + Math.cos(angle) * orbitR,
+    y:cy + Math.sin(angle) * orbitR * perspective,
+    orbitR,
+    angle
+  };
+}
+
+function drawPerspectiveGrid(svg,W,H,cx,cy,perspective){
+  const horizon=cy - 1180;
+  for(let y=horizon; y<=H; y+=170){
+    addLine(svg,0,y,W,y,"gridLine");
+  }
+  for(let x=-W; x<=W*1.4; x+=220){
+    addLine(svg,x,horizon,x+W*.62,H,"gridLine");
+    addLine(svg,x+W*.62,horizon,x,H,"gridLine");
+  }
+  addLine(svg,0,cy,W,cy,"gridAxis");
+}
+
+function drawPerspectiveOrbits(svg,cx,cy,positions,bodies,maxOrbit,perspective){
+  const labelled=new Set();
+  positions.forEach((p,idx)=>{
+    const body=bodies[idx];
+    if(body.type==="belt"){
+      addEllipse(svg,cx,cy,p.orbitR,p.orbitR*perspective,"none","beltOrbit");
+    }else{
+      addEllipse(svg,cx,cy,p.orbitR,p.orbitR*perspective,"none","orbit");
+    }
+    const tx=cx + Math.cos(p.angle) * p.orbitR;
+    const ty=cy + Math.sin(p.angle) * p.orbitR * perspective;
+    addLine(svg,tx-18,ty,tx+18,ty,"orbitTick");
+    addLine(svg,tx,ty-18,tx,ty+18,"orbitTick");
+    if((idx % 3 === 0 || body.type==="gas giant" || body.isMainworld) && !labelled.has(Math.round(p.orbitR))){
+      labelled.add(Math.round(p.orbitR));
+      addText(svg,cx+p.orbitR+24,cy-14,`${fmtAu(body.orbit)} AU`,"smallLabel",15,"start");
+    }
+  });
+  addText(svg,cx+170,cy-92,`Mapped out to ${fmtAu(maxOrbit)} AU`,"smallLabel",16,"start");
+  addText(svg,cx+170,cy-60,`Perspective view (${Math.round(Math.acos(perspective) * 180 / Math.PI)} deg)`,"smallLabel",16,"start");
+}
+
+function drawOrbitMarker(svg,x,y,body,idx){
+  addText(svg,x+142,y-104,`#${idx+1}`,"blueLabel",15,"start");
+}
+
+function orbitRadiusFor(orbit,maxOrbit,minR,maxR){
+  const safeOrbit=Math.max(.01,Number(orbit)||.01);
+  const safeMax=Math.max(safeOrbit,maxOrbit,.1);
+  const t=Math.log1p(safeOrbit*3)/Math.log1p(safeMax*3);
+  return minR + t * (maxR - minR);
+}
+
+function orbitalPhaseFor(body,idx){
+  const period=Math.max(1,Number(body.periodDays) || 365);
+  const epochDays=hashString(`${currentSystem.seed}|orbital-epoch`) % 250000;
+  const offset=(hashString(`${currentSystem.seed}|phase|${idx}|${body.orbit}`) % 360) * Math.PI / 180;
+  return ((epochDays % period) / period) * Math.PI * 2 + offset;
+}
+
+function orderedOrbitPhase(idx,total){
+  if(total <= 1) return 0;
+  const start=-160*Math.PI/180;
+  const end=-20*Math.PI/180;
+  return start + (idx/(total-1))*(end-start);
+}
+
+function orderedMoonPhase(idx,total){
+  if(total <= 1) return -35*Math.PI/180;
+  const start=-135*Math.PI/180;
+  const end=135*Math.PI/180;
+  return start + (idx/(total-1))*(end-start);
+}
+
+function moonOrbitRadius(m,idx,parentR){
+  const km=Number(m.orbitKm);
+  const base=parentR+56;
+  if(!Number.isFinite(km)) return base + idx * 44;
+  return base + Math.min(210, Math.log1p(km/36_000) * 42) + idx * 28;
+}
+
+function fmtAu(au){
+  const n=Number(au);
+  if(!Number.isFinite(n)) return "?";
+  return n < 1 ? n.toFixed(2) : n.toFixed(1);
+}
+
+function fmtPeriod(days){
+  const n=Number(days);
+  if(!Number.isFinite(n)) return "period ?";
+  if(n < 2) return `${n.toFixed(1)}d`;
+  if(n < 365) return `${Math.round(n)}d`;
+  return `${(n/365.25).toFixed(1)}y`;
+}
+
+function drawOrbitalKey(svg){
+  if(!opts.labels) return;
+  const x=90,y=5080;
+  addText(svg,x,y,"Perspective orbital map","blueLabel",20,"start");
+  addText(svg,x,y+34,"Bodies sit on projected solar orbit ellipses; each planet has its own local moon orbits.","smallLabel",17,"start");
+  addText(svg,x,y+62,"Distances are still approximate until this viewer consumes full traveller-world-gen orbit JSON.","smallLabel",17,"start");
+}
+
+function shouldLabelOrbitalBody(body,totalBodies){
+  if(totalBodies <= 8) return true;
+  return Boolean(body.isMainworld || body.type==="gas giant" || body.type==="belt");
+}
+
+function shouldLabelOrbitValue(body,idx,totalBodies){
+  if(totalBodies <= 8) return true;
+  return Boolean(body.isMainworld || body.type==="gas giant" || idx===0 || idx===totalBodies-1 || idx % 4 === 0);
 }
 function drawBodyAsset(svg,b,x,y,r){
   const asset=normalizeAsset(b.asset || b.type);
@@ -993,13 +1177,14 @@ function starName(star){ return `${star.spectralClass}${star.subtype} ${star.lum
 function addDefs(svg){
   const defs=document.createElementNS("http://www.w3.org/2000/svg","defs");
   const style=document.createElementNS("http://www.w3.org/2000/svg","style");
-  style.textContent=`.mainHalo{fill:none;stroke:#e8f4ff;stroke-width:2.2;filter:drop-shadow(0 0 8px #61b7ff)}.assetImage{image-rendering:auto}`;
+  style.textContent=`.mainHalo{fill:none;stroke:#e8f4ff;stroke-width:2.2;filter:drop-shadow(0 0 8px #61b7ff)}.assetImage{image-rendering:auto}.orbit{fill:none;stroke:#24507f;stroke-width:1;stroke-dasharray:5 6;opacity:.85}.orbitGuide{stroke:#1d3556;stroke-width:1;opacity:.65}.orbitTick{stroke:#4da3ff;stroke-width:1.2;opacity:.75}.gridLine{stroke:#162235;stroke-width:1;opacity:.55}.gridAxis{stroke:#223755;stroke-width:1.3;opacity:.8}.beltOrbit{fill:none;stroke:#c87941;stroke-width:42;opacity:.52}.moonLine{stroke:#244768;stroke-width:1.2}.moonOrbit{fill:none;stroke:#577da8;stroke-width:1;stroke-dasharray:3 4;opacity:.85}`;
   defs.appendChild(style);
   svg.appendChild(defs);
 }
 function clear(el){ while(el.firstChild) el.removeChild(el.firstChild); }
 function addRect(svg,x,y,w,h,fill){ const e=document.createElementNS("http://www.w3.org/2000/svg","rect"); e.setAttribute("x",x);e.setAttribute("y",y);e.setAttribute("width",w);e.setAttribute("height",h);e.setAttribute("fill",fill);svg.appendChild(e);return e; }
 function addCircle(svg,x,y,r,fill,cls){ const e=document.createElementNS("http://www.w3.org/2000/svg","circle"); e.setAttribute("cx",x);e.setAttribute("cy",y);e.setAttribute("r",r);e.setAttribute("fill",fill); if(cls)e.setAttribute("class",cls); svg.appendChild(e);return e; }
+function addEllipse(svg,x,y,rx,ry,fill,cls){ const e=document.createElementNS("http://www.w3.org/2000/svg","ellipse"); e.setAttribute("cx",x);e.setAttribute("cy",y);e.setAttribute("rx",rx);e.setAttribute("ry",ry);e.setAttribute("fill",fill); if(cls)e.setAttribute("class",cls); svg.appendChild(e);return e; }
 function addLine(svg,x1,y1,x2,y2,cls){ const e=document.createElementNS("http://www.w3.org/2000/svg","line"); e.setAttribute("x1",x1);e.setAttribute("y1",y1);e.setAttribute("x2",x2);e.setAttribute("y2",y2); if(cls)e.setAttribute("class",cls); svg.appendChild(e);return e; }
 function addText(svg,x,y,text,cls,size,anchor){
   const e=document.createElementNS("http://www.w3.org/2000/svg","text");
