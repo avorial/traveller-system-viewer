@@ -4,12 +4,14 @@ A browser-based visual system viewer for Traveller worlds.
 
 The app loads canonical world data from [Traveller Map](https://travellermap.com),
 expands the system procedurally, and renders it with custom planet and star
-artwork. It is designed for quick campaign use: enter a sector and hex, generate
-a visual system, then export the result for notes, handouts, or VTT use.
+artwork. It is designed for quick campaign use: search for a world by name or
+enter a sector and hex, generate a visual system, then export the result for
+notes, handouts, or VTT use.
 
 ## Features
 
-- Traveller Map lookup by sector and four-digit hex.
+- Traveller Map lookup by world name, sector and hex, or advanced Traveller Map
+  search syntax.
 - Cinematic system view using image-based planet and star assets.
 - Perspective orbital map with projected orbit ellipses, grid, AU labels, and
   local moon orbits.
@@ -28,6 +30,12 @@ Default example:
 - Sector: `Solomani Rim`
 - Hex: `0233`
 - World: Jardin
+
+Name search examples:
+
+- `Regina`
+- `exact:Jardin`
+- `Terra in:"Solomani Rim"`
 
 Use the controls at the top of the page to switch between the cinematic view and
 the orbital view. The name seed controls generated world and moon names; keep the

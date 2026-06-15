@@ -23,14 +23,22 @@
     button:hover{filter:brightness(1.12)}
     button.active{background:linear-gradient(#1b5a99,#103962);border-color:#4da3ff}
     .smallBtn{font-size:13px;padding:8px 10px}
-    .loader{display:grid;grid-template-columns:minmax(320px,1fr) 110px 110px;gap:12px;align-items:end;padding:12px 18px;border-bottom:1px solid var(--line);background:rgba(5,13,24,.8)}
+    .loader{display:grid;grid-template-columns:minmax(260px,1.35fr) minmax(220px,1fr) 96px 96px 120px;gap:12px;align-items:end;padding:14px 18px;border-bottom:1px solid var(--line);background:rgba(5,13,24,.8)}
     .loader label{font-size:12px;color:var(--muted);display:block;margin:0 0 4px}
     .field input{width:100%}
-    .sectorField{grid-column:1}
-    .hexField{grid-column:2}
-    .seedField{grid-column:1 / span 2}
+    .searchField{grid-column:1}
+    .sectorField{grid-column:2}
+    .hexField{grid-column:3}
+    .seedField{grid-column:1 / span 3}
     .loaderStatus{grid-column:1 / -1;margin-top:2px}
-    .seedButtons{display:flex;gap:10px;align-items:end}.seedButtons button{width:100%}
+    .seedButtons{grid-column:4 / span 2;display:flex;gap:10px;align-items:end}.seedButtons button{width:100%}
+    .loader button{width:100%;white-space:nowrap}
+    .searchResults{grid-column:1 / -1;display:none;border:1px solid var(--line);border-radius:10px;background:rgba(2,6,12,.78);padding:8px;max-height:260px;overflow:auto}
+    .searchResults.open{display:grid;grid-template-columns:repeat(auto-fill,minmax(250px,1fr));gap:8px}
+    .searchResult{border:1px solid #203c61;border-radius:8px;background:#07111d;padding:9px 10px;cursor:pointer;text-align:left;color:var(--text)}
+    .searchResult:hover,.searchResult:focus{border-color:#4da3ff;background:#0c1b2e;outline:0}
+    .searchResult strong{display:block;font-size:14px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+    .searchResult span{display:block;color:var(--muted);font-size:12px;margin-top:3px}
 
     .main{display:grid;grid-template-columns:minmax(0,1fr) 320px;gap:10px;padding:10px}
     .left{min-width:0}
@@ -97,7 +105,9 @@
     .graphicBases{fill:#ffd479;font-size:12px;font-weight:650}
     @media(max-width:1100px){
       .main{grid-template-columns:1fr}
-      .loader{display:grid;grid-template-columns:minmax(320px,1fr) 110px 110px;gap:12px;align-items:end;padding:12px 18px;border-bottom:1px solid var(--line);background:rgba(5,13,24,.8)}
+      .loader{grid-template-columns:minmax(240px,1fr) 96px 112px}
+      .searchField,.sectorField,.seedField,.seedButtons{grid-column:1 / -1}
+      .hexField{grid-column:1}
       .stats{grid-template-columns:repeat(2,1fr)}
       .orbitalWrap{grid-template-columns:1fr}
       .orbitTools{border-right:0;border-bottom:1px solid var(--line)}
@@ -123,6 +133,10 @@
     </header>
 
     <div class="loader">
+      <div class="field searchField">
+        <label>World Search</label>
+        <input id="worldSearch" value="" placeholder="Regina, Terra, exact:Jardin..." autocomplete="off">
+      </div>
       <div class="field sectorField">
         <label>Sector</label>
         <input id="sector" value="Solomani Rim" placeholder="Start typing a sector..." list="sectorList" autocomplete="off">
@@ -132,7 +146,9 @@
         <label>Hex</label>
         <input id="hex" value="0233" placeholder="0233">
       </div>
+      <button id="searchBtn">Search</button>
       <button id="loadBtn">Load</button>
+      <div id="searchResults" class="searchResults" aria-live="polite"></div>
       <div class="field seedField">
         <label>Name Seed</label>
         <input id="nameSeed" value="campaign-alpha-7" placeholder="shared procedural naming seed">
@@ -159,7 +175,7 @@
             <div class="orbitTools">
               <h3>Zoom</h3>
               <div class="rangeRow">
-                <button class="smallBtn" id="zoomOut">−</button>
+                <button class="smallBtn" id="zoomOut">-</button>
                 <input type="range" id="zoomRange" min="0.55" max="4" step="0.05" value="1">
                 <button class="smallBtn" id="zoomIn">+</button>
               </div>
@@ -250,6 +266,13 @@ let activeGenerationStar = null;
 
 const $ = id => document.getElementById(id);
 $("loadBtn").onclick = () => fetchWorldBySectorHex($("sector").value.trim(), $("hex").value.trim());
+$("searchBtn").onclick = () => searchWorldsByName($("worldSearch").value.trim());
+$("worldSearch").addEventListener("keydown", e => {
+  if(e.key === "Enter"){ e.preventDefault(); searchWorldsByName($("worldSearch").value.trim()); }
+});
+$("hex").addEventListener("keydown", e => {
+  if(e.key === "Enter"){ e.preventDefault(); fetchWorldBySectorHex($("sector").value.trim(), $("hex").value.trim()); }
+});
 $("regenNames").onclick = () => { nameSalt++; if(currentSystem){ currentSystem.seed = makeSeed(currentSystem.worldRecord); assignNames(currentSystem); renderAll(); } };
 $("applySeed").onclick = () => {
   nameSalt=0;
@@ -303,6 +326,72 @@ function jsonp(url, cb="tm_cb_"+Math.random().toString(36).slice(2)){
   });
 }
 
+async function searchWorldsByName(query){
+  clearSearchResults();
+  if(!query){ status("Type a world name or Traveller Map search query."); return; }
+  status("Searching Traveller Map for " + query + "...");
+  try{
+    const data = await apiJson(`${API}/api/search?q=${encodeURIComponent(query)}`);
+    const worlds = normalizeSearchWorlds(data);
+    if(!worlds.length){
+      status("No world matches found for " + query + ".");
+      return;
+    }
+    renderSearchResults(worlds);
+    status(worlds.length === 1 ? "Found 1 world. Select it to load." : "Found " + worlds.length + " worlds. Select one to load.");
+  }catch(err){ status(err.message); }
+}
+
+function normalizeSearchWorlds(data){
+  const items = data?.Results?.Items || data?.results?.items || data?.Items || data?.items || [];
+  return items.map(item => item.World || item.world || item)
+    .filter(w => w && (w.Name || w.name) && (w.Hex || w.hex || (Number.isFinite(w.HexX) && Number.isFinite(w.HexY))))
+    .map(w => ({
+      name: w.Name || w.name || "Unnamed World",
+      sector: w.Sector || w.sector || w.SectorName || "",
+      hex: w.Hex || w.hex || hexFromXY(w.HexX, w.HexY),
+      uwp: w.UWP || w.Uwp || w.uwp || "",
+      tags: w.SectorTags || w.Tags || ""
+    }))
+    .filter(w => w.sector && /^\d{4}$/.test(w.hex))
+    .slice(0, 40);
+}
+
+function hexFromXY(x,y){
+  const hx = Number(x);
+  const hy = Number(y);
+  if(!Number.isFinite(hx) || !Number.isFinite(hy)) return "";
+  return String(hx).padStart(2,"0") + String(hy).padStart(2,"0");
+}
+
+function renderSearchResults(worlds){
+  const target = $("searchResults");
+  target.innerHTML = worlds.map((w,idx) => `
+    <button class="searchResult" type="button" data-index="${idx}">
+      <strong>${esc(w.name)}</strong>
+      <span>${esc(w.sector)} ${esc(w.hex)}${w.uwp ? " | " + esc(w.uwp) : ""}</span>
+      ${w.tags ? `<span>${esc(w.tags)}</span>` : ""}
+    </button>
+  `).join("");
+  target.classList.add("open");
+  target.querySelectorAll(".searchResult").forEach(btn => {
+    btn.addEventListener("click", () => {
+      const world = worlds[Number(btn.dataset.index)];
+      $("worldSearch").value = world.name;
+      $("sector").value = world.sector;
+      $("hex").value = world.hex;
+      clearSearchResults();
+      fetchWorldBySectorHex(world.sector, world.hex);
+    });
+  });
+}
+
+function clearSearchResults(){
+  const target = $("searchResults");
+  target.classList.remove("open");
+  target.innerHTML = "";
+}
+
 async function loadSectorList(){
   const dl = $("sectorList");
   const fallback = [
@@ -332,6 +421,7 @@ async function loadSectorList(){
 
 async function fetchWorldBySectorHex(sector,hex){
   if(!sector||!/^\d{4}$/.test(hex)){ status("Need a sector and four-digit hex."); return; }
+  clearSearchResults();
   status("Loading "+sector+" "+hex+"...");
   try{
     const data = await apiJson(`${API}/api/jumpworlds?sector=${encodeURIComponent(sector)}&hex=${encodeURIComponent(hex)}&jump=0`);
